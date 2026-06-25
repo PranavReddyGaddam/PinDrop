@@ -1,0 +1,40 @@
+# ---- Secrets / credentials (NEVER commit) ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.aws/
+
+# ---- Python / backend ----
+venv/
+backend/venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+
+# ---- Local databases ----
+*.db
+*.sqlite
+*.sqlite3
+backend/dev.db
+
+# ---- Node / Next.js (frontend has its own .gitignore too) ----
+node_modules/
+.next/
+out/
+.vercel/
+*.tsbuildinfo
+
+# ---- OS / editor ----
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# ---- Local tooling state ----
+.claude/
