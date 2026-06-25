@@ -65,6 +65,12 @@ body {
   animation: price-drop-flash 0.6s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* Slide enter: gentle fade + lift, used by the /presentation deck. */
+@keyframes fade {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 /* Subtle pulse for the "DROP LIVE" dot. */
 @keyframes live-pulse {
   0%, 100% { opacity: 1; }

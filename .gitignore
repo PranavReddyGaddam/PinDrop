@@ -38,3 +38,7 @@ out/
 
 # ---- Local tooling state ----
 .claude/
+
+# ---- Documentation ----
+EC2_SETUP.md
+SUBMISSION.md
