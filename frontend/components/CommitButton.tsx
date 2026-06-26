@@ -16,11 +16,13 @@ type State = "idle" | "loading" | "done" | "full" | "error";
 export function CommitButton({
   campaignId,
   unitPrice,
+  quantity = 1,
   disabled,
   onCommitted,
 }: {
   campaignId: string;
   unitPrice: number;
+  quantity?: number;
   disabled?: boolean;
   onCommitted?: () => void;
 }) {
@@ -31,7 +33,7 @@ export function CommitButton({
     setState("loading");
     setError(null);
     try {
-      await commit(campaignId, { user_id: getDemoUserId(), quantity: 1 });
+      await commit(campaignId, { user_id: getDemoUserId(), quantity });
       setState("done");
       onCommitted?.();
     } catch (e) {
@@ -78,7 +80,9 @@ export function CommitButton({
           "Committing…"
         ) : (
           <>
-            Commit at {money(unitPrice)}
+            {quantity > 1
+              ? `Commit ${quantity} at ${money(unitPrice * quantity)}`
+              : `Commit at ${money(unitPrice)}`}
             <FiArrowRight aria-hidden />
           </>
         )}

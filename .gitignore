@@ -42,3 +42,7 @@ out/
 # ---- Documentation ----
 EC2_SETUP.md
 SUBMISSION.md
+
+# ---- Data ----
+amazon_categories.csv
+amazon_products.csv

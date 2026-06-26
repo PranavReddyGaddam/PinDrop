@@ -7,6 +7,8 @@ import {
   FiArrowUpRight,
   FiShoppingBag,
   FiLock,
+  FiMinus,
+  FiPlus,
 } from "react-icons/fi";
 import { getCampaignStats, settle, ApiError, type CampaignStats } from "@/lib/api";
 import { money } from "@/lib/format";
@@ -26,6 +28,7 @@ export function PriceDropDisplay({ initial }: { initial: CampaignStats }) {
   const [flash, setFlash] = useState(false);
   const [settling, setSettling] = useState(false);
   const [settleError, setSettleError] = useState<string | null>(null);
+  const [qty, setQty] = useState(1);
   const prevPrice = useRef(initial.current_price);
   const cart = useCart();
 
@@ -84,6 +87,10 @@ export function PriceDropDisplay({ initial }: { initial: CampaignStats }) {
   const deadline = new Date(
     closes_at.endsWith("Z") || closes_at.includes("+") ? closes_at : `${closes_at}Z`,
   ).getTime();
+
+  // Units still available in the batch — caps the quantity stepper (min 1 so the
+  // controls stay usable even on a nearly-full drop).
+  const maxQty = Math.max(1, batch_cap - current_count);
 
   const peopleToNext =
     next_tier_at != null ? Math.max(0, next_tier_at - current_count) : 0;
@@ -197,10 +204,61 @@ export function PriceDropDisplay({ initial }: { initial: CampaignStats }) {
         </div>
       ) : (
         <>
+          {/* Quantity stepper */}
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-sm font-medium text-foreground">Quantity</span>
+              <p className="text-xs text-muted">{maxQty} available</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setQty((q) => Math.max(1, q - 1))}
+                disabled={closed || qty <= 1}
+                aria-label="Decrease quantity"
+                className="flex h-10 w-10 items-center justify-center rounded-full border border-hairline text-foreground transition-colors hover:border-teal hover:text-teal disabled:opacity-40"
+              >
+                <FiMinus className="h-4 w-4" aria-hidden />
+              </button>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={maxQty}
+                value={qty}
+                disabled={closed}
+                aria-label="Quantity"
+                onChange={(e) => {
+                  // Allow the field to be empty mid-typing; clamp on blur.
+                  const v = e.target.value;
+                  if (v === "") {
+                    setQty(1);
+                    return;
+                  }
+                  const n = parseInt(v, 10);
+                  if (!Number.isNaN(n)) setQty(Math.min(maxQty, Math.max(1, n)));
+                }}
+                onBlur={(e) => {
+                  const n = parseInt(e.target.value, 10);
+                  setQty(Number.isNaN(n) ? 1 : Math.min(maxQty, Math.max(1, n)));
+                }}
+                className="h-10 w-16 rounded-lg border border-hairline text-center text-lg font-semibold tabular-nums text-foreground outline-none transition-colors focus:border-teal disabled:opacity-40 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              />
+              <button
+                onClick={() => setQty((q) => Math.min(maxQty, q + 1))}
+                disabled={closed || qty >= maxQty}
+                aria-label="Increase quantity"
+                className="flex h-10 w-10 items-center justify-center rounded-full border border-hairline text-foreground transition-colors hover:border-teal hover:text-teal disabled:opacity-40"
+              >
+                <FiPlus className="h-4 w-4" aria-hidden />
+              </button>
+            </div>
+          </div>
+
           {/* Commit CTA */}
           <CommitButton
             campaignId={initial.campaign.id}
             unitPrice={current_price}
+            quantity={qty}
             disabled={closed}
             onCommitted={refresh}
           />
@@ -208,12 +266,15 @@ export function PriceDropDisplay({ initial }: { initial: CampaignStats }) {
           {/* Add to cart */}
           <button
             onClick={() =>
-              cart.add({
-                campaignId: initial.campaign.id,
-                title,
-                imageUrl: image_url,
-                unitPrice: current_price,
-              })
+              cart.add(
+                {
+                  campaignId: initial.campaign.id,
+                  title,
+                  imageUrl: image_url,
+                  unitPrice: current_price,
+                },
+                qty,
+              )
             }
             disabled={closed}
             className="-mt-2 flex w-full items-center justify-center gap-2 rounded-full border border-hairline px-6 py-3.5 text-base font-medium text-foreground transition-colors hover:border-teal hover:text-teal disabled:opacity-50"

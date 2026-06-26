@@ -1,15 +1,19 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { FiChevronDown } from "react-icons/fi";
 import { getCampaigns, type CampaignSummary } from "@/lib/api";
-import { CampaignCard } from "./CampaignCard";
+import { CampaignGrid } from "./CampaignGrid";
 
 const POLL_MS = 5000;
+const PAGE_SIZE = 24;
 const ALL = "All";
 
 /**
- * Live, filterable drops browser. Polls the full list every 5s and filters by category
- * on the client, so switching categories is instant and prices stay current.
+ * Full drops browser for the /drops page: category dropdown + header search (?q=) +
+ * pagination, so the 200-drop catalog is never one endless scroll. Polls the full list
+ * every 5s and filters client-side.
  */
 export function CampaignBrowser({
   initial,
@@ -20,6 +24,9 @@ export function CampaignBrowser({
 }) {
   const [items, setItems] = useState(initial);
   const [active, setActive] = useState<string>(ALL);
+  const [page, setPage] = useState(1);
+  const params = useSearchParams();
+  const query = (params.get("q") ?? "").trim().toLowerCase();
 
   useEffect(() => {
     const t = setInterval(async () => {
@@ -32,45 +39,92 @@ export function CampaignBrowser({
     return () => clearInterval(t);
   }, []);
 
-  const tabs = [ALL, ...categories];
-  const filtered = useMemo(
-    () =>
-      active === ALL
-        ? items
-        : items.filter((s) => s.campaign.category === active),
-    [items, active],
-  );
+  const filtered = useMemo(() => {
+    return items.filter((s) => {
+      const okCat = active === ALL || s.campaign.category === active;
+      const okQuery =
+        !query ||
+        s.campaign.title.toLowerCase().includes(query) ||
+        s.campaign.category.toLowerCase().includes(query);
+      return okCat && okQuery;
+    });
+  }, [items, active, query]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const current = Math.min(page, totalPages);
+  const pageItems = filtered.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
 
   return (
     <div>
-      {/* Category nav */}
-      <nav className="mb-10 flex flex-wrap gap-2">
-        {tabs.map((cat) => {
-          const isActive = cat === active;
-          return (
-            <button
-              key={cat}
-              onClick={() => setActive(cat)}
-              className={
-                isActive
-                  ? "rounded-full bg-foreground px-4 py-2 text-sm font-medium text-white"
-                  : "rounded-full border border-hairline px-4 py-2 text-sm font-medium text-foreground/70 hover:border-teal hover:text-teal"
-              }
-            >
-              {cat}
-            </button>
-          );
-        })}
-      </nav>
+      {/* Controls: category dropdown + result count */}
+      <div className="mb-10 flex flex-wrap items-center justify-between gap-4">
+        <div className="relative">
+          <select
+            value={active}
+            onChange={(e) => {
+              setActive(e.target.value);
+              setPage(1);
+            }}
+            aria-label="Filter by category"
+            className="appearance-none rounded-full border border-hairline bg-background py-2.5 pl-5 pr-11 text-sm font-medium text-foreground outline-none transition-colors hover:border-teal focus:border-teal"
+          >
+            <option value={ALL}>All categories</option>
+            {categories.map((cat) => (
+              <option key={cat} value={cat}>
+                {cat}
+              </option>
+            ))}
+          </select>
+          <FiChevronDown
+            aria-hidden
+            className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"
+          />
+        </div>
+
+        <p className="text-sm text-muted">
+          {filtered.length} {filtered.length === 1 ? "drop" : "drops"}
+          {query && (
+            <>
+              {" "}
+              for <span className="text-foreground">&ldquo;{query}&rdquo;</span>
+            </>
+          )}
+          {active !== ALL && <> in {active}</>}
+        </p>
+      </div>
 
       {filtered.length === 0 ? (
-        <p className="text-muted">No live drops in this category right now.</p>
+        <p className="text-muted">
+          No live drops match
+          {query ? ` “${query}”` : ""}
+          {active !== ALL ? ` in ${active}` : ""}.
+        </p>
       ) : (
-        <div className="grid grid-cols-1 gap-x-6 gap-y-10 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {filtered.map((s) => (
-            <CampaignCard key={s.campaign.id} summary={s} />
-          ))}
-        </div>
+        <>
+          <CampaignGrid items={pageItems} />
+
+          {totalPages > 1 && (
+            <div className="mt-14 flex items-center justify-center gap-3">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={current === 1}
+                className="rounded-full border border-hairline px-5 py-2 text-sm font-medium text-foreground transition-colors hover:border-teal hover:text-teal disabled:opacity-30"
+              >
+                Previous
+              </button>
+              <span className="text-sm tabular-nums text-muted">
+                Page {current} of {totalPages}
+              </span>
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={current === totalPages}
+                className="rounded-full border border-hairline px-5 py-2 text-sm font-medium text-foreground transition-colors hover:border-teal hover:text-teal disabled:opacity-30"
+              >
+                Next
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

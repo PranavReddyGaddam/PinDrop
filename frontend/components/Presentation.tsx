@@ -215,7 +215,7 @@ function StackSlide() {
     <div className="text-center">
       <Kicker>the stack</Kicker>
       <Title>Vercel × AWS, production-shaped.</Title>
-      <div className="mx-auto mt-10 max-w-md space-y-3">
+      <div className="mx-auto mt-8 max-w-md space-y-3">
         {layers.map((l) => (
           <div
             key={l.label}
@@ -231,6 +231,20 @@ function StackSlide() {
             <span className="text-sm uppercase tracking-wide opacity-80">
               {l.sub}
             </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Real-scale stats — not a toy demo */}
+      <div className="mx-auto mt-8 grid max-w-lg grid-cols-3 gap-6">
+        {[
+          { n: "200+", l: "live drops" },
+          { n: "115", l: "categories" },
+          { n: "real", l: "products + photos" },
+        ].map((s) => (
+          <div key={s.l}>
+            <p className="font-serif text-3xl font-semibold text-teal">{s.n}</p>
+            <p className="mt-1 text-xs uppercase tracking-wide text-muted">{s.l}</p>
           </div>
         ))}
       </div>
