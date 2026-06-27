@@ -10,8 +10,15 @@ import {
   FiMinus,
   FiPlus,
 } from "react-icons/fi";
-import { getCampaignStats, settle, ApiError, type CampaignStats } from "@/lib/api";
-import { money } from "@/lib/format";
+import {
+  getCampaignStats,
+  getMyCommitments,
+  uncommit,
+  settle,
+  ApiError,
+  type CampaignStats,
+} from "@/lib/api";
+import { money, getDemoUserId } from "@/lib/format";
 import { Countdown } from "./Countdown";
 import { TierLadder } from "./TierLadder";
 import { CommitButton } from "./CommitButton";
@@ -29,8 +36,46 @@ export function PriceDropDisplay({ initial }: { initial: CampaignStats }) {
   const [settling, setSettling] = useState(false);
   const [settleError, setSettleError] = useState<string | null>(null);
   const [qty, setQty] = useState(1);
+  // How many units the current demo user has committed to this drop (0 = none).
+  const [committedQty, setCommittedQty] = useState(0);
+  const [leaving, setLeaving] = useState(false);
+  const [leaveError, setLeaveError] = useState<string | null>(null);
   const prevPrice = useRef(initial.current_price);
   const cart = useCart();
+
+  // Detect an existing commitment to this drop on mount (so reloads still show the
+  // "Leave drop" control, not just right after committing).
+  async function refreshMyCommitment() {
+    try {
+      const mine = await getMyCommitments(getDemoUserId());
+      const row = mine.find((m) => m.campaign.id === initial.campaign.id);
+      setCommittedQty(row ? row.quantity : 0);
+    } catch {
+      /* leave as-is on a transient error */
+    }
+  }
+
+  useEffect(() => {
+    // Deferred so setState lands in a callback, not synchronously in the effect body.
+    const t = setTimeout(refreshMyCommitment, 0);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleLeave() {
+    if (!confirm("Leave this drop? Your spot and price hold are released.")) return;
+    setLeaving(true);
+    setLeaveError(null);
+    try {
+      await uncommit(initial.campaign.id, { user_id: getDemoUserId() });
+      setCommittedQty(0);
+      await refresh();
+    } catch (e) {
+      setLeaveError(e instanceof ApiError ? e.message : "Couldn't leave the drop.");
+    } finally {
+      setLeaving(false);
+    }
+  }
 
   async function handleSettle() {
     setSettling(true);
@@ -81,12 +126,7 @@ export function PriceDropDisplay({ initial }: { initial: CampaignStats }) {
     seconds_remaining,
     tiers,
   } = stats;
-  const { batch_cap, title, status, closes_at, image_url } = stats.campaign;
-  // Backend stores naive UTC timestamps; normalize to UTC so the Date parses correctly
-  // regardless of the viewer's timezone.
-  const deadline = new Date(
-    closes_at.endsWith("Z") || closes_at.includes("+") ? closes_at : `${closes_at}Z`,
-  ).getTime();
+  const { batch_cap, title, status, image_url } = stats.campaign;
 
   // Units still available in the batch — caps the quantity stepper (min 1 so the
   // controls stay usable even on a nearly-full drop).
@@ -193,7 +233,7 @@ export function PriceDropDisplay({ initial }: { initial: CampaignStats }) {
       {/* Countdown */}
       <div className="flex items-center gap-2 text-sm text-muted">
         <FiClock aria-hidden />
-        <Countdown deadline={deadline} /> left
+        <Countdown secondsRemaining={seconds_remaining} /> left
       </div>
 
       {settled ? (
@@ -260,8 +300,31 @@ export function PriceDropDisplay({ initial }: { initial: CampaignStats }) {
             unitPrice={current_price}
             quantity={qty}
             disabled={closed}
-            onCommitted={refresh}
+            onCommitted={() => {
+              refresh();
+              refreshMyCommitment();
+            }}
           />
+
+          {/* You're in -> offer to leave the drop (releases the spot + hold). */}
+          {committedQty > 0 && !closed && (
+            <div className="-mt-2 flex flex-col items-center gap-1">
+              <p className="text-sm text-muted">
+                You&apos;re in for {committedQty}{" "}
+                {committedQty === 1 ? "unit" : "units"}.
+              </p>
+              <button
+                onClick={handleLeave}
+                disabled={leaving}
+                className="text-sm font-medium text-muted underline-offset-4 transition-colors hover:text-red-600 hover:underline disabled:opacity-50"
+              >
+                {leaving ? "Leaving…" : "Leave this drop"}
+              </button>
+              {leaveError && (
+                <p className="text-sm text-red-600">{leaveError}</p>
+              )}
+            </div>
+          )}
 
           {/* Add to cart */}
           <button

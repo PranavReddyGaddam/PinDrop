@@ -27,12 +27,21 @@ class MockStripe:
     def create_payment_intent(
         self, amount_cents: int, metadata: dict[str, Any] | None = None
     ) -> dict[str, Any]:
+        pid = f"pi_mock_{uuid.uuid4().hex[:24]}"
         return {
-            "id": f"pi_mock_{uuid.uuid4().hex[:24]}",
+            "id": pid,
             "status": "requires_capture",
             "amount": amount_cents,
             "metadata": metadata or {},
+            # A fake client_secret so the frontend mock path has the same shape.
+            "client_secret": f"{pid}_secret_{uuid.uuid4().hex[:16]}",
         }
+
+    def retrieve_payment_intent(self, payment_intent_id: str) -> dict[str, Any]:
+        return {"id": payment_intent_id, "status": "requires_capture"}
+
+    def cancel_payment_intent(self, payment_intent_id: str) -> dict[str, Any]:
+        return {"id": payment_intent_id, "status": "canceled"}
 
     def capture_payment_intent(
         self, payment_intent_id: str, amount_to_capture_cents: int
@@ -56,15 +65,25 @@ class LiveStripe:
     def create_payment_intent(
         self, amount_cents: int, metadata: dict[str, Any] | None = None
     ) -> dict[str, Any]:
+        # Manual capture: the card is authorized (held) now on the client via the
+        # returned client_secret, then captured at the final price during settlement.
+        # automatic_payment_methods lets the frontend PaymentElement pick the method.
         intent = self._stripe.PaymentIntent.create(
             amount=amount_cents,
             currency="usd",
-            capture_method="manual",  # authorize now, capture at settlement
+            capture_method="manual",
             metadata=metadata or {},
-            # For a real client flow you'd attach a payment_method + confirm=True;
-            # left to the frontend slice. Here we create the intent to authorize.
+            automatic_payment_methods={"enabled": True},
         )
-        return {"id": intent.id, "status": intent.status}
+        return {
+            "id": intent.id,
+            "status": intent.status,
+            "client_secret": intent.client_secret,
+        }
+
+    def retrieve_payment_intent(self, payment_intent_id: str) -> dict[str, Any]:
+        intent = self._stripe.PaymentIntent.retrieve(payment_intent_id)
+        return {"id": intent.id, "status": intent.status, "amount": intent.amount}
 
     def capture_payment_intent(
         self, payment_intent_id: str, amount_to_capture_cents: int
@@ -72,6 +91,12 @@ class LiveStripe:
         intent = self._stripe.PaymentIntent.capture(
             payment_intent_id, amount_to_capture=amount_to_capture_cents
         )
+        return {"id": intent.id, "status": intent.status}
+
+    def cancel_payment_intent(self, payment_intent_id: str) -> dict[str, Any]:
+        # Releases the authorization hold (manual-capture intents) when a buyer
+        # uncommits before settlement.
+        intent = self._stripe.PaymentIntent.cancel(payment_intent_id)
         return {"id": intent.id, "status": intent.status}
 
 

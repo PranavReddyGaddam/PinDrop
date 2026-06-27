@@ -49,6 +49,14 @@ export interface CommitResult {
   payment_intent_id: string | null;
 }
 
+export interface PaymentIntentResult {
+  client_secret: string;
+  payment_intent_id: string;
+  amount: number; // cents
+  unit_price: number;
+  mock: boolean; // true => mock mode, skip the real card UI
+}
+
 export interface SettleResult {
   success: boolean;
   final_price: number;
@@ -142,12 +150,51 @@ export async function getCampaignStats(id: string): Promise<CampaignStats> {
   );
 }
 
-export async function commit(
+export async function createPaymentIntent(
   id: string,
   body: { user_id: string; quantity?: number },
+): Promise<PaymentIntentResult> {
+  return handle(
+    await fetch(`${API_BASE}/api/campaigns/${id}/payment-intent`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+export async function commit(
+  id: string,
+  body: { user_id: string; quantity?: number; payment_intent_id?: string },
 ): Promise<CommitResult> {
   return handle(
     await fetch(`${API_BASE}/api/campaigns/${id}/commit`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+export async function uncommit(
+  id: string,
+  body: { user_id: string },
+): Promise<{ success: boolean; cancelled: number; quantity_released: number }> {
+  return handle(
+    await fetch(`${API_BASE}/api/campaigns/${id}/uncommit`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+export async function setQuantity(
+  id: string,
+  body: { user_id: string; quantity: number },
+): Promise<{ success: boolean; quantity: number }> {
+  return handle(
+    await fetch(`${API_BASE}/api/campaigns/${id}/set-quantity`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),

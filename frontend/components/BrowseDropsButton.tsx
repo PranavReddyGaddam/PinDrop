@@ -15,7 +15,7 @@ export function BrowseDropsButton() {
     <a
       href="#live-drops"
       onClick={handleClick}
-      className="text-base font-medium text-foreground/70 transition-colors hover:text-teal"
+      className="text-base font-medium text-white/85 transition-colors hover:text-lime"
     >
       Browse live drops
     </a>

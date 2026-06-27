@@ -55,6 +55,26 @@ body {
   font-family: var(--font-fraunces), Georgia, serif;
 }
 
+/*
+  Tailwind's preflight (and modern UA styles) set buttons to cursor:default. Restore a
+  finger pointer on everything clickable, and show not-allowed on disabled controls.
+*/
+button:not(:disabled),
+a[href],
+label[for],
+select,
+summary,
+[role="button"]:not([aria-disabled="true"]),
+[role="option"],
+[role="tab"] {
+  cursor: pointer;
+}
+
+button:disabled,
+[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
 /* Price-drop flash: a quick lime pulse + scale on the price when a tier unlocks. */
 @keyframes price-drop-flash {
   0%   { transform: scale(1); }

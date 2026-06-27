@@ -12,6 +12,31 @@ export function hms(totalSeconds: number): string {
 }
 
 /**
+ * Human-readable time remaining for cards/lists. Nobody parses "62:05:07" in their head,
+ * so we use coarse units when there's lots of time and only fall to a ticking clock when
+ * it's genuinely urgent:
+ *   >= 1 day   -> "2d 14h"
+ *   >= 1 hour  -> "5h 12m"
+ *   < 1 hour   -> "08:05" (mm:ss — the seconds now create real urgency)
+ */
+export function humanTime(totalSeconds: number): string {
+  const s = Math.max(0, Math.floor(totalSeconds));
+  if (s >= 86400) {
+    const d = Math.floor(s / 86400);
+    const h = Math.floor((s % 86400) / 3600);
+    return `${d}d ${h}h`;
+  }
+  if (s >= 3600) {
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return `${h}h ${m}m`;
+  }
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+}
+
+/**
  * A stable per-browser demo identity. The backend doesn't require real auth for the
  * hackathon; each browser commits as one synthetic user. UUID v4 via crypto.
  */

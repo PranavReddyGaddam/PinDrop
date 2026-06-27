@@ -66,16 +66,54 @@ class CampaignSummary(BaseModel):
     seconds_remaining: int
 
 
+class PaymentIntentIn(BaseModel):
+    user_id: uuid.UUID
+    quantity: int = Field(default=1, ge=1)
+
+
+class PaymentIntentOut(BaseModel):
+    """Returned to the frontend so Stripe.js can confirm the card (test mode)."""
+
+    client_secret: str
+    payment_intent_id: str
+    amount: int  # cents, current price * quantity
+    unit_price: float
+    mock: bool  # true when STRIPE_MODE=mock -> frontend skips real card UI
+
+
 class CommitIn(BaseModel):
     user_id: uuid.UUID
     quantity: int = Field(default=1, ge=1)
-    payment_method_id: str | None = None  # forwarded to Stripe in test mode
+    # When the frontend has already created + confirmed a PaymentIntent (real Stripe
+    # test flow), it passes that id here. If omitted, the backend creates one itself
+    # (mock mode, or the no-card demo path).
+    payment_intent_id: str | None = None
 
 
 class CommitOut(BaseModel):
     success: bool
     authorized_unit_price: float
     payment_intent_id: str | None
+
+
+class UncommitIn(BaseModel):
+    user_id: uuid.UUID
+
+
+class UncommitOut(BaseModel):
+    success: bool
+    cancelled: int  # number of commitment rows cancelled
+    quantity_released: int  # total units returned to the batch
+
+
+class SetQuantityIn(BaseModel):
+    user_id: uuid.UUID
+    quantity: int = Field(ge=0)  # the new TOTAL committed quantity (0 = leave the drop)
+
+
+class SetQuantityOut(BaseModel):
+    success: bool
+    quantity: int  # the resulting total committed quantity
 
 
 class SettleOut(BaseModel):

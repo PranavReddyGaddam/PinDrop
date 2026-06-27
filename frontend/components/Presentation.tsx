@@ -11,6 +11,9 @@ import {
   FiLayers,
   FiShield,
   FiRefreshCw,
+  FiCreditCard,
+  FiLock,
+  FiEdit3,
 } from "react-icons/fi";
 
 /**
@@ -205,6 +208,47 @@ function DsqlSlide() {
   );
 }
 
+function PaymentsSlide() {
+  const steps = [
+    {
+      icon: FiCreditCard,
+      head: "Authorize on commit",
+      body: "Stripe holds the card at the current price — manual capture, no charge yet.",
+    },
+    {
+      icon: FiEdit3,
+      head: "Edit or leave",
+      body: "Change your quantity or drop out before close; the hold adjusts or releases.",
+    },
+    {
+      icon: FiLock,
+      head: "Capture at settle",
+      body: "When the drop closes, every buyer is captured at the final, lowest tier.",
+    },
+  ];
+  return (
+    <div className="text-center">
+      <Kicker>real checkout</Kicker>
+      <Title>You only pay the price the crowd reached.</Title>
+      <div className="mt-10 grid gap-5 sm:grid-cols-3">
+        {steps.map((s, i) => (
+          <div key={s.head} className="relative rounded-2xl bg-soft/70 p-6 text-left">
+            <span className="absolute right-4 top-4 font-serif text-3xl text-hairline">
+              {i + 1}
+            </span>
+            <s.icon className="h-7 w-7 text-teal" aria-hidden />
+            <p className="mt-3 font-serif text-xl text-teal">{s.head}</p>
+            <p className="mt-2 text-base text-foreground/75">{s.body}</p>
+          </div>
+        ))}
+      </div>
+      <p className="mt-8 text-sm uppercase tracking-wide text-muted">
+        Stripe (test mode) — authorize now, capture the final lower price
+      </p>
+    </div>
+  );
+}
+
 function StackSlide() {
   const layers = [
     { label: "Next.js + React", sub: "Vercel", tone: "lime" },
@@ -277,6 +321,7 @@ const SLIDES: (() => React.ReactNode)[] = [
   ExampleSlide,
   AudienceSlide,
   DsqlSlide,
+  PaymentsSlide,
   StackSlide,
   CloseSlide,
 ];

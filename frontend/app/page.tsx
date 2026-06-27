@@ -58,29 +58,25 @@ export default async function Home() {
           className="absolute inset-0 -z-20 h-full w-full object-cover object-center"
         />
         {/*
-          Directional scrim: solid white over the text column on the left, fading to
-          fully transparent by center-right so the photo stays vivid and un-washed.
-          Explicit color stops keep the white zone opaque, then drop to clear quickly.
+          Soft left-edge gradient: dark on the far left, fully transparent by ~60%, so the
+          white hero text stays legible over a busy photo without washing the image out.
         */}
         <div
           aria-hidden
-          className="absolute inset-0 -z-10 [background:linear-gradient(to_right,#ffffff_0%,#ffffff_34%,rgba(255,255,255,0.85)_46%,rgba(255,255,255,0)_68%)]"
+          className="absolute inset-0 -z-10 [background:linear-gradient(to_right,rgba(10,10,10,0.62)_0%,rgba(10,10,10,0.38)_28%,rgba(10,10,10,0)_60%)]"
         />
 
         <div className="mx-auto w-full max-w-page px-5">
-          {/* Text column constrained to the left so it stays in the white scrim zone. */}
+          {/* Text column kept left, where the gradient guarantees contrast. */}
           <div className="max-w-xl lg:max-w-[52%]">
-            <p className="font-script text-3xl text-teal sm:text-4xl">
-              do what makes you save
+            <p className="font-script text-3xl text-lime sm:text-4xl">
+              shop with your people
             </p>
-            <h1 className="mt-3 font-serif text-6xl leading-[1.02] text-foreground sm:text-7xl">
-              The price drops as more people join.
+            <h1 className="mt-3 font-serif text-6xl leading-[1.02] text-white drop-shadow-sm sm:text-7xl">
+              Great finds,
+              <br />
+              better together.
             </h1>
-            <p className="mt-7 max-w-xl text-lg text-foreground/70">
-              A group-buy marketplace for everything. Every buyer pays the lowest
-              price reached by the deadline — share a drop to pay less, for you and
-              everyone already in.
-            </p>
 
             <div className="mt-10 flex flex-wrap items-center gap-4">
               <Link

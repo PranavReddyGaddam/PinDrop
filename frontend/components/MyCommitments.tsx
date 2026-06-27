@@ -1,10 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { FiUsers, FiClock, FiArrowRight } from "react-icons/fi";
-import { getMyCommitments, type MyCommitment } from "@/lib/api";
-import { money, hms, getDemoUserId } from "@/lib/format";
+import { FiUsers, FiClock, FiArrowRight, FiX, FiPlus, FiMinus } from "react-icons/fi";
+import {
+  getMyCommitments,
+  uncommit,
+  setQuantity,
+  ApiError,
+  type MyCommitment,
+} from "@/lib/api";
+import { money, humanTime, getDemoUserId } from "@/lib/format";
+import { CheckoutModal } from "./CheckoutModal";
 
 const POLL_MS = 5000;
 
@@ -20,19 +27,25 @@ type State =
 export function MyCommitments() {
   const [state, setState] = useState<State>({ phase: "loading" });
 
-  useEffect(() => {
-    const userId = getDemoUserId();
-    let active = true;
+  const reload = useCallback(async () => {
+    try {
+      const items = await getMyCommitments(getDemoUserId());
+      setState({ phase: "ready", items });
+    } catch {
+      setState((s) => (s.phase === "ready" ? s : { phase: "error" }));
+    }
+  }, []);
 
+  useEffect(() => {
+    let active = true;
     async function load() {
       try {
-        const items = await getMyCommitments(userId);
+        const items = await getMyCommitments(getDemoUserId());
         if (active) setState({ phase: "ready", items });
       } catch {
         if (active) setState((s) => (s.phase === "ready" ? s : { phase: "error" }));
       }
     }
-
     load();
     const t = setInterval(load, POLL_MS);
     return () => {
@@ -75,16 +88,71 @@ export function MyCommitments() {
   return (
     <ul className="divide-y divide-hairline">
       {state.items.map((c) => (
-        <CommitmentRow key={c.commitment_id} c={c} />
+        <CommitmentRow key={c.commitment_id} c={c} onChanged={reload} />
       ))}
     </ul>
   );
 }
 
-function CommitmentRow({ c }: { c: MyCommitment }) {
+function CommitmentRow({
+  c,
+  onChanged,
+}: {
+  c: MyCommitment;
+  onChanged: () => void | Promise<void>;
+}) {
   const { campaign } = c;
   const closed = c.settled || c.seconds_remaining <= 0;
   const lineTotal = c.current_price * c.quantity;
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Editable TOTAL quantity. Seeded from the committed amount; max = current committed
+  // plus the units still free in the batch (so you can raise it), min = 1 (use "Leave
+  // drop" to go to 0).
+  const available = Math.max(0, campaign.batch_cap - c.current_count);
+  const maxTotal = c.quantity + available;
+  const [draft, setDraft] = useState(c.quantity);
+  const [checkout, setCheckout] = useState(false);
+  const dirty = draft !== c.quantity;
+
+  function clamp(n: number) {
+    if (Number.isNaN(n)) return 1;
+    return Math.min(maxTotal, Math.max(1, n));
+  }
+
+  async function applyChange() {
+    if (!dirty) return;
+    if (draft < c.quantity) {
+      // Reduction applies instantly (releases the freed holds).
+      setBusy(true);
+      setErr(null);
+      try {
+        await setQuantity(campaign.id, { user_id: getDemoUserId(), quantity: draft });
+        await onChanged();
+      } catch (e) {
+        setErr(e instanceof ApiError ? e.message : "Couldn't update quantity.");
+      } finally {
+        setBusy(false);
+      }
+    } else {
+      // Increase -> authorize the extra units through checkout.
+      setCheckout(true);
+    }
+  }
+
+  async function handleUncommit() {
+    if (!confirm("Leave this drop? Your spot and price hold are released.")) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await uncommit(campaign.id, { user_id: getDemoUserId() });
+      await onChanged();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Couldn't leave the drop.");
+      setBusy(false);
+    }
+  }
 
   return (
     <li className="flex flex-col gap-4 py-6 sm:flex-row sm:items-center">
@@ -120,7 +188,7 @@ function CommitmentRow({ c }: { c: MyCommitment }) {
                 ? "Settled"
                 : closed
                   ? "Closed"
-                  : `${hms(c.seconds_remaining)} left`}
+                  : `${humanTime(c.seconds_remaining)} left`}
             </span>
             {c.quantity > 1 && <span>Qty {c.quantity}</span>}
           </div>
@@ -141,7 +209,81 @@ function CommitmentRow({ c }: { c: MyCommitment }) {
             {money(lineTotal)} total
           </p>
         )}
+        {!closed && (
+          <div className="mt-3 flex flex-wrap items-center gap-2 sm:justify-end">
+            <span className="text-sm text-muted">Qty</span>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setDraft((q) => clamp(q - 1))}
+                disabled={busy || draft <= 1}
+                aria-label="Decrease quantity"
+                className="flex h-8 w-8 items-center justify-center rounded-full border border-hairline text-foreground transition-colors hover:border-teal hover:text-teal disabled:opacity-40"
+              >
+                <FiMinus className="h-3.5 w-3.5" aria-hidden />
+              </button>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={maxTotal}
+                value={draft}
+                disabled={busy}
+                aria-label="Total quantity"
+                onChange={(e) =>
+                  setDraft(e.target.value === "" ? 1 : clamp(parseInt(e.target.value, 10)))
+                }
+                onBlur={(e) => setDraft(clamp(parseInt(e.target.value, 10)))}
+                className="h-8 w-14 rounded-lg border border-hairline text-center text-base font-semibold tabular-nums text-foreground outline-none transition-colors focus:border-teal disabled:opacity-40 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              />
+              <button
+                onClick={() => setDraft((q) => clamp(q + 1))}
+                disabled={busy || draft >= maxTotal}
+                aria-label="Increase quantity"
+                className="flex h-8 w-8 items-center justify-center rounded-full border border-hairline text-foreground transition-colors hover:border-teal hover:text-teal disabled:opacity-40"
+              >
+                <FiPlus className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            </div>
+            {dirty && (
+              <button
+                onClick={applyChange}
+                disabled={busy}
+                className="inline-flex items-center gap-1.5 rounded-full bg-lime px-4 py-1.5 text-sm font-semibold text-lime-ink transition-transform hover:scale-[1.02] disabled:opacity-60"
+              >
+                {busy ? "Updating…" : draft > c.quantity ? `Add ${draft - c.quantity}` : "Update"}
+              </button>
+            )}
+          </div>
+        )}
+
+        {!closed && (
+          <button
+            onClick={handleUncommit}
+            disabled={busy}
+            className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-muted underline-offset-4 transition-colors hover:text-red-600 hover:underline disabled:opacity-50 sm:justify-end"
+          >
+            <FiX aria-hidden className="h-3.5 w-3.5" />
+            {busy ? "Leaving…" : "Leave drop"}
+          </button>
+        )}
+        {err && <p className="mt-1 text-sm text-red-600">{err}</p>}
       </div>
+
+      {checkout && (
+        <CheckoutModal
+          campaignId={campaign.id}
+          quantity={Math.max(1, draft - c.quantity)}
+          unitPrice={c.current_price}
+          onClose={() => {
+            setCheckout(false);
+            setDraft(c.quantity);
+          }}
+          onCommitted={() => {
+            setCheckout(false);
+            void onChanged();
+          }}
+        />
+      )}
     </li>
   );
 }

@@ -32,10 +32,17 @@ from .schemas import (
     CommitIn,
     CommitOut,
     MyCommitment,
+    PaymentIntentIn,
+    PaymentIntentOut,
     PreviousDrop,
+    SetQuantityIn,
+    SetQuantityOut,
     SettleOut,
     TierOut,
+    UncommitIn,
+    UncommitOut,
 )
+from . import config
 from .stripe_adapter import stripe_client
 
 SETTLEMENT_CHUNK_SIZE = 500  # stay well under DSQL's 10,000-row transaction limit
@@ -173,18 +180,32 @@ def my_commitments(
         .all()
     )
 
-    out: list[MyCommitment] = []
+    # Group by campaign: a user who commits to the same drop several times sees ONE row
+    # with the summed quantity, not a row per commitment. Order is preserved by most
+    # recent commit (commitments arrive newest-first above). We keep the latest
+    # commitment's id + timestamp as the representative for the grouped row.
+    grouped: dict[uuid.UUID, list[Commitment]] = {}
+    order: list[uuid.UUID] = []
     for c in commitments:
-        campaign = db.get(Campaign, c.campaign_id)
+        if c.campaign_id not in grouped:
+            grouped[c.campaign_id] = []
+            order.append(c.campaign_id)
+        grouped[c.campaign_id].append(c)
+
+    out: list[MyCommitment] = []
+    for campaign_id in order:
+        rows = grouped[campaign_id]
+        campaign = db.get(Campaign, campaign_id)
         if campaign is None:
             continue  # campaign deleted out from under the commitment; skip defensively
-        pricing = get_current_price(db, c.campaign_id)
+        pricing = get_current_price(db, campaign_id)
+        latest = rows[0]  # newest commit (list ordered newest-first)
         out.append(
             MyCommitment(
-                commitment_id=c.id,
+                commitment_id=latest.id,
                 campaign=CampaignOut.model_validate(campaign),
-                quantity=c.quantity,
-                committed_at=c.committed_at,
+                quantity=sum(r.quantity for r in rows),
+                committed_at=latest.committed_at,
                 current_price=pricing.current_price,
                 current_count=pricing.current_count,
                 seconds_remaining=max(
@@ -323,6 +344,43 @@ def campaign_history(
     return history
 
 
+@app.post(
+    "/api/campaigns/{campaign_id}/payment-intent", response_model=PaymentIntentOut
+)
+def create_payment_intent(
+    campaign_id: uuid.UUID, payload: PaymentIntentIn
+) -> PaymentIntentOut:
+    """Create a manual-capture PaymentIntent for the current price * quantity.
+
+    The frontend uses the returned client_secret to confirm the card (Stripe.js
+    PaymentElement), authorizing the hold. It then calls /commit with the
+    payment_intent_id. In mock mode the client_secret is fake and the frontend skips
+    the card UI.
+    """
+    with SessionLocal() as db:
+        campaign = _load_campaign(db, campaign_id)
+        if campaign.status != "open":
+            raise HTTPException(status_code=400, detail="Campaign is not open")
+        if _now() > _as_aware(campaign.closes_at):
+            raise HTTPException(status_code=400, detail="Campaign has closed")
+        if campaign.batch_cap - get_current_price(db, campaign_id).current_count < payload.quantity:
+            raise HTTPException(status_code=409, detail="BATCH_FULL")
+        unit_price = get_current_price(db, campaign_id).current_price
+
+    amount = round(unit_price * payload.quantity * 100)
+    intent = stripe_client.create_payment_intent(
+        amount_cents=amount,
+        metadata={"campaign_id": str(campaign_id), "user_id": str(payload.user_id)},
+    )
+    return PaymentIntentOut(
+        client_secret=intent["client_secret"],
+        payment_intent_id=intent["id"],
+        amount=amount,
+        unit_price=unit_price,
+        mock=config.STRIPE_MODE != "test",
+    )
+
+
 @app.post("/api/campaigns/{campaign_id}/commit", response_model=CommitOut)
 def commit(campaign_id: uuid.UUID, payload: CommitIn) -> CommitOut:
     # 1. Validate campaign state (read-only, no OCC risk).
@@ -337,12 +395,20 @@ def commit(campaign_id: uuid.UUID, payload: CommitIn) -> CommitOut:
 
     unit_price = pricing.current_price
 
-    # 2. Authorize payment at the current price (manual capture; captured at settle).
-    intent = stripe_client.create_payment_intent(
-        amount_cents=round(unit_price * payload.quantity * 100),
-        metadata={"campaign_id": str(campaign_id), "user_id": str(payload.user_id)},
-    )
-    payment_intent_id = intent["id"]
+    # 2. Payment authorization. If the frontend already created + confirmed a
+    #    PaymentIntent (real Stripe test flow), reuse it. Otherwise create one here
+    #    (mock mode / no-card demo path).
+    if payload.payment_intent_id:
+        payment_intent_id = payload.payment_intent_id
+    else:
+        intent = stripe_client.create_payment_intent(
+            amount_cents=round(unit_price * payload.quantity * 100),
+            metadata={
+                "campaign_id": str(campaign_id),
+                "user_id": str(payload.user_id),
+            },
+        )
+        payment_intent_id = intent["id"]
 
     # 3. Write the commitment inside an OCC-retried transaction.
     #    SELECT ... FOR UPDATE on the single control row serializes the cap check.
@@ -384,6 +450,176 @@ def commit(campaign_id: uuid.UUID, payload: CommitIn) -> CommitOut:
         authorized_unit_price=unit_price,
         payment_intent_id=payment_intent_id,
     )
+
+
+@app.post("/api/campaigns/{campaign_id}/uncommit", response_model=UncommitOut)
+def uncommit(campaign_id: uuid.UUID, payload: UncommitIn) -> UncommitOut:
+    """Cancel ALL of a user's active commitments for a drop and release the units.
+
+    Mirrors commit: the control row's reserved_count is decremented under the same
+    FOR UPDATE lock (OCC-retried). Commitments are append-only, so we mark them
+    status='cancelled' rather than deleting. Any Stripe authorization hold is cancelled
+    so the buyer's funds are released. Not allowed once a drop has settled (price locked,
+    orders written).
+    """
+    with SessionLocal() as db:
+        campaign = _load_campaign(db, campaign_id)
+        if campaign.status == "settled":
+            raise HTTPException(
+                status_code=400, detail="Drop has settled — can't uncommit"
+            )
+
+    # Collect the payment intents to cancel (outside the retried tx; Stripe is external).
+    cancelled_ids: list[str] = []
+
+    def _do_uncommit() -> tuple[int, int]:
+        nonlocal cancelled_ids
+        with SessionLocal() as db:
+            control = db.execute(
+                select(CampaignControl)
+                .where(CampaignControl.campaign_id == campaign_id)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if control is None:
+                raise HTTPException(status_code=500, detail="Campaign control row missing")
+
+            rows = (
+                db.execute(
+                    select(Commitment).where(
+                        Commitment.campaign_id == campaign_id,
+                        Commitment.user_id == payload.user_id,
+                        Commitment.status == "active",
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if not rows:
+                raise HTTPException(status_code=404, detail="No active commitment to cancel")
+
+            released = 0
+            ids: list[str] = []
+            for r in rows:
+                r.status = "cancelled"
+                released += r.quantity
+                if r.payment_intent_id:
+                    ids.append(r.payment_intent_id)
+
+            # Never let the cap guard go negative.
+            control.reserved_count = max(0, control.reserved_count - released)
+            db.commit()
+            cancelled_ids = ids
+            return len(rows), released
+
+    cancelled_count, quantity_released = with_dsql_retry(_do_uncommit)
+
+    # Release the Stripe authorization holds (best-effort; the DB state is committed).
+    for pid in cancelled_ids:
+        try:
+            stripe_client.cancel_payment_intent(pid)
+        except Exception:
+            pass  # hold expires on its own; don't fail the uncommit on a Stripe hiccup
+
+    return UncommitOut(
+        success=True,
+        cancelled=cancelled_count,
+        quantity_released=quantity_released,
+    )
+
+
+@app.post("/api/campaigns/{campaign_id}/set-quantity", response_model=SetQuantityOut)
+def set_quantity(campaign_id: uuid.UUID, payload: SetQuantityIn) -> SetQuantityOut:
+    """Set the user's TOTAL committed quantity to a new value (reduction only).
+
+    Used by "edit quantity" to lower a commitment (or set it to 0 = leave). Increases go
+    through the normal checkout/commit path (they need a fresh payment authorization).
+
+    Strategy: cancel all the user's active commitments for the drop, then — if the target
+    is > 0 — write a single new active commitment for the target quantity, carrying an
+    existing payment_intent_id forward so the already-authorized hold covers the smaller
+    amount (we capture the lower final price * quantity at settlement). reserved_count is
+    reconciled under the same FOR UPDATE lock as commit/uncommit.
+    """
+    with SessionLocal() as db:
+        campaign = _load_campaign(db, campaign_id)
+        if campaign.status == "settled":
+            raise HTTPException(status_code=400, detail="Drop has settled — can't edit")
+
+    target = payload.quantity
+    released_ids: list[str] = []
+
+    def _do_set() -> int:
+        nonlocal released_ids
+        with SessionLocal() as db:
+            control = db.execute(
+                select(CampaignControl)
+                .where(CampaignControl.campaign_id == campaign_id)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if control is None:
+                raise HTTPException(status_code=500, detail="Campaign control row missing")
+
+            rows = (
+                db.execute(
+                    select(Commitment).where(
+                        Commitment.campaign_id == campaign_id,
+                        Commitment.user_id == payload.user_id,
+                        Commitment.status == "active",
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            current_total = sum(r.quantity for r in rows)
+            if not rows:
+                raise HTTPException(status_code=404, detail="No active commitment")
+            if target > current_total:
+                # Increases require a new authorization -> use the commit/checkout flow.
+                raise HTTPException(
+                    status_code=400,
+                    detail="Use checkout to add units",
+                )
+            if target == current_total:
+                return current_total  # no-op
+
+            # Keep one payment intent to carry forward (the existing hold covers the
+            # reduced amount, since target < current_total). Cancel the rest.
+            keep_pid = next((r.payment_intent_id for r in rows if r.payment_intent_id), None)
+            ids: list[str] = []
+            for r in rows:
+                r.status = "cancelled"
+                # Cancel every hold except the one we're carrying forward.
+                if r.payment_intent_id and r.payment_intent_id != keep_pid:
+                    ids.append(r.payment_intent_id)
+
+            if target > 0:
+                db.add(
+                    Commitment(
+                        campaign_id=campaign_id,
+                        user_id=payload.user_id,
+                        quantity=target,
+                        status="active",
+                        payment_intent_id=keep_pid,
+                    )
+                )
+            elif keep_pid:
+                # Dropping to 0 -> release the carried hold too.
+                ids.append(keep_pid)
+
+            control.reserved_count = max(0, control.reserved_count - (current_total - target))
+            db.commit()
+            released_ids = ids
+            return target
+
+    new_total = with_dsql_retry(_do_set)
+
+    for pid in released_ids:
+        try:
+            stripe_client.cancel_payment_intent(pid)
+        except Exception:
+            pass
+
+    return SetQuantityOut(success=True, quantity=new_total)
 
 
 @app.post("/api/campaigns/{campaign_id}/settle", response_model=SettleOut)

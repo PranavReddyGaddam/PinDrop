@@ -64,10 +64,10 @@ class Campaign(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Marketplace category, e.g. "Electronics", "Home", "Apparel". Free-form text;
-    # the UI offers a curated set but DSQL has no enum dependency.
+    # Marketplace category, e.g. "Electronics", "Home", "Apparel". Free-form Text
+    # (unbounded) — real catalog categories can exceed any fixed VARCHAR length.
     category: Mapped[str] = mapped_column(
-        String(40), nullable=False, server_default=text("'Other'"), default="Other"
+        Text, nullable=False, server_default=text("'Other'"), default="Other"
     )
     batch_cap: Mapped[int] = mapped_column(Integer, nullable=False)
     opens_at: Mapped[dt.datetime] = mapped_column(

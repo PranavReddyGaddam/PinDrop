@@ -2,16 +2,17 @@
 
 import { useState } from "react";
 import { FiCheck, FiArrowRight } from "react-icons/fi";
-import { commit, ApiError } from "@/lib/api";
-import { getDemoUserId } from "@/lib/format";
 import { money } from "@/lib/format";
+import { CheckoutModal } from "./CheckoutModal";
 
-type State = "idle" | "loading" | "done" | "full" | "error";
+type State = "idle" | "checkout" | "done";
 
 /**
- * Commits the current browser's demo user to the campaign. In the backend's mock
- * Stripe mode this needs only user_id + quantity — no card UI. (Stripe Elements is a
- * later slice; this component is the seam where it'll plug in.)
+ * Opens the Stripe checkout for committing to a drop. The actual payment (authorize
+ * now, capture at settle) happens in CheckoutModal; this is the trigger + done state.
+ *
+ * If the buyer changes the quantity after committing, the "done" state is dismissed and
+ * the Commit button reappears so they can commit the new amount.
  */
 export function CommitButton({
   campaignId,
@@ -27,37 +28,26 @@ export function CommitButton({
   onCommitted?: () => void;
 }) {
   const [state, setState] = useState<State>("idle");
-  const [error, setError] = useState<string | null>(null);
+  // The quantity captured in the last successful commit; used to re-show the button
+  // when the stepper changes after committing.
+  const [committedAtQty, setCommittedAtQty] = useState<number | null>(null);
 
-  async function handleClick() {
-    setState("loading");
-    setError(null);
-    try {
-      await commit(campaignId, { user_id: getDemoUserId(), quantity });
-      setState("done");
-      onCommitted?.();
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
-        setState("full");
-      } else {
-        setState("error");
-        setError(e instanceof Error ? e.message : "Something went wrong");
-      }
-    }
-  }
+  // Only show the "done" confirmation while the quantity still matches what was
+  // committed; if the buyer changes the stepper, the Commit button reappears.
+  const showDone = state === "done" && committedAtQty === quantity;
 
-  if (state === "full" || disabled) {
+  if (disabled) {
     return (
       <button
         disabled
         className="w-full rounded-full bg-soft px-6 py-4 text-base font-semibold text-muted"
       >
-        {state === "full" ? "Batch full — campaign closed early" : "Drop closed"}
+        Drop closed
       </button>
     );
   }
 
-  if (state === "done") {
+  if (showDone) {
     return (
       <button
         disabled
@@ -70,24 +60,30 @@ export function CommitButton({
   }
 
   return (
-    <div>
+    <>
       <button
-        onClick={handleClick}
-        disabled={state === "loading"}
-        className="flex w-full items-center justify-center gap-2 rounded-full bg-lime px-6 py-4 text-base font-semibold text-lime-ink transition-transform hover:scale-[1.01] active:scale-[0.99] disabled:opacity-60"
+        onClick={() => setState("checkout")}
+        className="flex w-full items-center justify-center gap-2 rounded-full bg-lime px-6 py-4 text-base font-semibold text-lime-ink transition-transform hover:scale-[1.01] active:scale-[0.99]"
       >
-        {state === "loading" ? (
-          "Committing…"
-        ) : (
-          <>
-            {quantity > 1
-              ? `Commit ${quantity} at ${money(unitPrice * quantity)}`
-              : `Commit at ${money(unitPrice)}`}
-            <FiArrowRight aria-hidden />
-          </>
-        )}
+        {quantity > 1
+          ? `Commit ${quantity} at ${money(unitPrice * quantity)}`
+          : `Commit at ${money(unitPrice)}`}
+        <FiArrowRight aria-hidden />
       </button>
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-    </div>
+
+      {state === "checkout" && (
+        <CheckoutModal
+          campaignId={campaignId}
+          quantity={quantity}
+          unitPrice={unitPrice}
+          onClose={() => setState("idle")}
+          onCommitted={() => {
+            setCommittedAtQty(quantity);
+            setState("done");
+            onCommitted?.();
+          }}
+        />
+      )}
+    </>
   );
 }
