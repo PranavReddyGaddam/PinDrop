@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   FiArrowLeft,
   FiArrowRight,
@@ -296,22 +297,6 @@ function StackSlide() {
   );
 }
 
-function CloseSlide() {
-  return (
-    <div className="text-center">
-      <Kicker>thanks</Kicker>
-      <h2 className="font-serif text-7xl font-semibold lowercase tracking-tight text-teal sm:text-8xl">
-        pindrop
-      </h2>
-      <div className="mx-auto mt-7 h-1.5 w-24 rounded-full bg-lime" />
-      <p className="mt-7 text-xl text-teal/80">
-        The price drops as more people join.
-      </p>
-      <p className="mt-2 font-serif text-lg text-teal">pin-drop-six.vercel.app</p>
-    </div>
-  );
-}
-
 const SLIDES: (() => React.ReactNode)[] = [
   () => (
     <HeroSlide tagline="A drop-pricing group-buy marketplace built on Amazon Aurora DSQL and Vercel." />
@@ -323,14 +308,21 @@ const SLIDES: (() => React.ReactNode)[] = [
   DsqlSlide,
   PaymentsSlide,
   StackSlide,
-  CloseSlide,
 ];
 
 export function Presentation() {
   const [i, setI] = useState(0);
   const total = SLIDES.length;
+  const router = useRouter();
 
-  const next = useCallback(() => setI((n) => Math.min(total - 1, n + 1)), [total]);
+  // Advancing past the last slide exits the deck to the homepage.
+  const next = useCallback(() => {
+    if (i >= total - 1) {
+      router.push("/");
+    } else {
+      setI(i + 1);
+    }
+  }, [i, total, router]);
   const prev = useCallback(() => setI((n) => Math.max(0, n - 1)), []);
 
   useEffect(() => {
