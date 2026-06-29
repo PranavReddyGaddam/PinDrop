@@ -42,6 +42,7 @@ out/
 # ---- Documentation ----
 EC2_SETUP.md
 SUBMISSION.md
+PRESENTATION_SCRIPT.md
 
 # ---- Data ----
 amazon_categories.csv
@@ -52,3 +53,6 @@ codrops-grid-to-preview/
 
 # ---- Images ----
 hero_1.jpg
+
+# ---- Submission ----
+pindrop-submission.zip

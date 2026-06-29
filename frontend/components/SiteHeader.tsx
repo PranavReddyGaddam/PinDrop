@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { CartButton } from "./cart/CartButton";
 import { SearchButton } from "./SearchButton";
+import { MobileNav } from "./MobileNav";
 
 /** syrn-style frame: thin periwinkle promo bar + centered wordmark + minimal nav. */
 export function SiteHeader() {
@@ -11,8 +12,9 @@ export function SiteHeader() {
       </div>
       <div className="border-b border-hairline bg-background">
         <div className="relative mx-auto flex h-[72px] max-w-page items-center px-5">
-          {/* Left: nav */}
-          <nav className="flex gap-6 text-sm font-medium uppercase tracking-wide">
+          {/* Left: inline nav on sm+, hamburger on mobile (so the centered wordmark
+              never collides with the links on narrow screens). */}
+          <nav className="hidden gap-6 text-sm font-medium uppercase tracking-wide sm:flex">
             <Link href="/campaigns/new" className="hover:text-teal">
               Start a drop
             </Link>
@@ -20,6 +22,7 @@ export function SiteHeader() {
               My drops
             </Link>
           </nav>
+          <MobileNav />
 
           {/* Center: wordmark — absolutely centered so the right-side icons can hug
               the right edge regardless of the nav/icon widths. */}

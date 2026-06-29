@@ -136,12 +136,23 @@ def _collect_candidates() -> list[dict]:
     return picks[:TOTAL_PRODUCTS]
 
 
-def _wipe(db) -> None:
-    from sqlalchemy import delete
+# DSQL caps a single transaction at 10,000 rows, so a bare `DELETE FROM table` blows up
+# once enough commitments accumulate. Delete in chunks of primary keys, committing each.
+_WIPE_CHUNK = 2000
 
+
+def _wipe(db) -> None:
+    from sqlalchemy import delete, select
+
+    # Children before parents (refs are app-enforced, but keep a sensible order).
     for model in (Order, Commitment, CampaignControl, PriceTier, Campaign, User):
-        db.execute(delete(model))
-    db.commit()
+        pk = model.campaign_id if model is CampaignControl else model.id
+        while True:
+            ids = db.execute(select(pk).limit(_WIPE_CHUNK)).scalars().all()
+            if not ids:
+                break
+            db.execute(delete(model).where(pk.in_(ids)))
+            db.commit()
 
 
 def run() -> None:
